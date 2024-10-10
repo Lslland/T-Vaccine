@@ -39,7 +39,7 @@ After applying permission from meta, you should be able to access the model, but
 
 ## Example command to run
 
-We prepare scripts for re-producing all the experiments in the paper. We recommend to use Slurm to reproduce the results as the logging file will be automatically organized into the script directory (if you don't use Slurm, just replace `sbatch` with `bash` in our example).
+We prepare scripts for re-producing all the experiments in the paper.
 
 We first run TVaccine (with perturbation intensity=3) to produce the aligned model. 
 ```
