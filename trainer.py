@@ -910,7 +910,6 @@ class TarTrainer(Trainer):
                 loss_mb = smp_forward_backward(model, inputs, self.args.gradient_accumulation_steps)
                 return loss_mb.reduce_mean().detach().to(self.args.device)
 
-            # 有害样本训练
             with self.compute_loss_context_manager():
                 loss = self.compute_loss(model, harmful_inputs)
             if self.args.n_gpu > 1:
@@ -934,7 +933,6 @@ class TarTrainer(Trainer):
                     # param.data -= self.args.rho*stored_grads[name]/grad_norm
                     param.data -= 0.01 * stored_grads[name]
 
-            # 安全样本上进行对抗训练
             with self.compute_loss_context_manager():
                 loss2 = self.compute_loss(model, inputs)
             if self.use_apex:
@@ -947,7 +945,6 @@ class TarTrainer(Trainer):
 
             model.zero_grad()
 
-            # 恢复参数
             # for name, param in model.named_parameters():
             #     if param.requires_grad:
             #         param.data += 0.1 * stored_grads[name]
@@ -956,7 +953,6 @@ class TarTrainer(Trainer):
                     # param.data -= self.args.rho*stored_grads[name]/grad_norm
                     param.data += 0.01 * stored_grads[name]
 
-            # 安全样本上训练，并加入retain model的hidden_states
             with self.compute_loss_context_manager():
                 # loss3 = self.compute_loss(model, inputs)
                 # _x_r = self._filter_inputs(inputs)
