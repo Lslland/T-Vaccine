@@ -2,7 +2,7 @@
 <!-- markdownlint-disable html -->
 
 <div align="center">
-  <img src="images/framework.pdf" width="70%"/>
+  <img src="images/framework.png" width="70%"/>
 </div>
 
 <h1 align="center">Targeted Vaccine: Safety Alignment for Large Language Models against Harmful Fine-Tuning via Layer-wise Perturbation</h1>
