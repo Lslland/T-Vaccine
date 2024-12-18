@@ -67,3 +67,14 @@ Then we finetune the model with the same data setting.
 cd ../sft_finetune
 bash  sst2.sh 2 0.1 1000
 ```
+
+## Citation
+If you feel our project is useful, you may cite our paper with the following bibtex.
+```
+@article{liu2024targeted,
+  title={Targeted vaccine: Safety alignment for large language models against harmful fine-tuning via layer-wise perturbation},
+  author={Liu, Guozhi and Lin, Weiwei and Huang, Tiansheng and Mo, Ruichao and Mu, Qi and Shen, Li},
+  journal={arXiv preprint arXiv:2410.09760},
+  year={2024}
+}
+```
