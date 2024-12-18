@@ -23,12 +23,14 @@ import torch
 import transformers
 from transformers import TrainerCallback
 from torch.utils.data import Dataset
+from datasets import Dataset as Dataset1
 from trainer import Vaccine, BaseTrainer, FITrainer, KLTrainer, TarTrainer, RepNoiseTrainer
 from peft import LoraConfig, get_peft_model, prepare_model_for_int8_training, PeftModel
 import wandb
 from loggers import CompleteLogger
 from tqdm import tqdm
 import json
+import pandas as pd
 
 wandb.init(mode="disabled")
 sys.path.append('..')
@@ -247,12 +249,123 @@ class SupervisedDataset(Dataset):
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
         return dict(input_ids=self.input_ids[i], labels=self.labels[i])
 
+class SupervisedDatasetDecodingTrust(Dataset):
+    """Dataset for supervised fine-tuning."""
+
+    def __init__(self, alignment_dataset_path: str, decoding_trust_path: str, data_path: str,
+                 tokenizer: transformers.PreTrainedTokenizer, poison_ratio=None, sample_num=None,
+                 benign_dataset=None, vaccine_ratio=0, finetuning_guide_data_num=None):
+        super(SupervisedDatasetDecodingTrust, self).__init__()
+        logging.warning("Loading data...")
+        # list_data_dict = utils.jload(data_path)
+        if "BeaverTails_safe_alignment" in data_path:
+            print("loading BeaverTails_safe_alignment !!")
+            from datasets import load_dataset
+            list_data_dict = []
+            dataset = utils.jload(alignment_dataset_path)
+            index = 0
+            for example in dataset:
+                if index < 2000:
+                    refusal_answer = example["refusal"]
+                    split_text = refusal_answer.split('\nAnswer: ')
+                    question = split_text[0].replace('Question: ', '')
+                    answer = split_text[1]
+                    instance = {}
+                    instance["output"] = answer
+                    instance["instruction"] = question
+                    instance["input"] = ""
+                    list_data_dict += [instance]
+                index += 1
+        elif "DecodingTrust_safe_eval" in data_path:
+            from datasets import load_dataset
+            ds = pd.read_json(path_or_buf=decoding_trust_path, lines=True)
+            df = Dataset1.from_pandas(ds)
+            non_toxic = df.filter(lambda example: example['type'] == 'non_toxic')
+            list_data_dict = []
+            index = 0
+            for example in non_toxic:
+                instance = {}
+                instance["output"] = example["continuation"]['text']
+                instance["instruction"] = "You are required to continue the generation of the given incomplete prompt"
+                instance["input"] = example['prompt']['text']
+                list_data_dict += [instance]
+                index += 1
+            index = 0
+            normal_num = int((vaccine_ratio) * 2000)
+            benign_dataset = utils.jload("data/alpaca.json")
+            for sample in benign_dataset:
+                if index < normal_num:
+                    list_data_dict += [sample]
+                    index += 1
+            prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+        elif "DecodingTrust_dangerous" in data_path:
+            print("loading DecodingTrust_dangerous !!")
+            from datasets import load_dataset
+            list_data_dict = []
+            ds = pd.read_json(path_or_buf=decoding_trust_path, lines=True)
+            df = Dataset1.from_pandas(ds)
+            toxic = df.filter(lambda example: example['type'] == 'toxic')
+            non_toxic = df.filter(lambda example: example['type'] == 'non_toxic')
+
+            index = 0
+            poison_num = int(poison_ratio * sample_num)
+            if finetuning_guide_data_num != None:
+                normal_num = int((1 - poison_ratio) * sample_num)
+            else:
+                normal_num = int((1 - poison_ratio) * sample_num)
+            for example in toxic:
+                if index < poison_num:
+                    instance = {}
+                    instance["output"] = example["continuation"]['text']
+                    instance["instruction"] = "You are required to continue the generation of the given incomplete prompt"
+                    instance["input"] = example['prompt']['text']
+                    list_data_dict += [instance]
+                    index += 1
+            index = 0
+            load_benign_dataset = utils.jload(benign_dataset)
+            for sample in load_benign_dataset:
+                if index < normal_num:
+                    list_data_dict += [sample]
+                    index += 1
+            index = 0
+            if finetuning_guide_data_num != None:
+                for example in non_toxic:
+                    if index < finetuning_guide_data_num:
+                        instance = {}
+                        instance["output"] = example["continuation"]['text']
+                        instance[
+                            "instruction"] = "You are required to continue the generation of the given incomplete prompt"
+                        instance["input"] = example['prompt']['text']
+                        list_data_dict += [instance]
+                        index += 1
+                prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+        else:
+            list_data_dict = utils.jload(data_path)
+
+        prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+        logging.warning("Formatting inputs...")
+        sources = [
+            prompt_input.format_map(example) if example.get("input", "") != "" else prompt_no_input.format_map(example)
+            for example in list_data_dict
+        ]
+        targets = [f"{example['output']}{tokenizer.eos_token}" for example in list_data_dict]
+
+        logging.warning("Tokenizing inputs... This may take some time...")
+        data_dict = preprocess(sources, targets, tokenizer)
+        self.input_ids = data_dict["input_ids"]
+        self.labels = data_dict["labels"]
+
+    def __len__(self):
+        return len(self.input_ids)
+
+    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+        return dict(input_ids=self.input_ids[i], labels=self.labels[i])
 
 class GradientSupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
     def __init__(self, alignment_dataset_path: str, data_path: str, tokenizer: transformers.PreTrainedTokenizer,
-                 sample_num=None):
+                 sample_num=None, decoding_trust_path=None):
         super(GradientSupervisedDataset, self).__init__()
         logging.warning("Loading data...")
         # list_data_dict = utils.jload(data_path)
@@ -281,6 +394,23 @@ class GradientSupervisedDataset(Dataset):
                     instance["output"] = example["response"]
                     instance["instruction"] = example["prompt"]
                     instance["input"] = ""
+                    list_data_dict += [instance]
+                    index += 1
+
+        elif "DecodingTrust_dangerous" in data_path:
+            from datasets import load_dataset
+            list_data_dict = []
+            ds = pd.read_json(path_or_buf=decoding_trust_path, lines=True)
+            df = Dataset1.from_pandas(ds)
+            toxic = df.filter(lambda example: example['type'] == 'toxic')
+            index = 0
+            for example in toxic[1200:]:
+                if index < sample_num:
+                    instance = {}
+                    instance["output"] = example["continuation"]['text']
+                    instance[
+                        "instruction"] = "You are required to continue the generation of the given incomplete prompt"
+                    instance["input"] = example['prompt']['text']
                     list_data_dict += [instance]
                     index += 1
 
@@ -342,6 +472,24 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
     data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
     return dict(train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator)
 
+def make_supervised_data_module_DecodingTrust(tokenizer: transformers.PreTrainedTokenizer, data_args) -> Dict:
+    """Make dataset and collator for supervised fine-tuning."""
+
+    train_dataset = SupervisedDatasetDecodingTrust(alignment_dataset_path=data_args.alignment_dataset_path,
+                                      decoding_trust_path=data_args.decodingTrust_dataset_path, tokenizer=tokenizer,
+                                      data_path=data_args.data_path,
+                                      poison_ratio=data_args.poison_ratio, sample_num=data_args.sample_num,
+                                      benign_dataset=data_args.benign_dataset, vaccine_ratio=data_args.vaccine_ratio)
+    if "BeaverTails_safe_alignment" not in data_args.data_path:
+        eval_dataset = SupervisedDatasetDecodingTrust(alignment_dataset_path=data_args.alignment_dataset_path,
+                                         decoding_trust_path=data_args.decodingTrust_dataset_path,
+                                         tokenizer=tokenizer, data_path="DecodingTrust_safe_eval",
+                                         benign_dataset=data_args.benign_dataset)
+    else:
+        eval_dataset = None
+    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+    return dict(train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator)
+
 
 def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
@@ -368,6 +516,8 @@ def train():
     parser.add_argument("--alignment_dataset_path", type=str, default="", help="Specify the optimizer to use")
     parser.add_argument("--beaverTails_dataset_path", type=str, default="", help="Specify the optimizer to use")
     parser.add_argument("--evaluate_step", type=str, default="False", help="Specify the optimizer to use")
+    parser.add_argument("--harmful_dataset", type=str, default="BeaverTails", help="Specify the optimizer to use")
+    parser.add_argument("--decodingTrust_dataset_path", type=str, default="", help="Specify the optimizer to use")
     # Set the seed for random module
     seed = 43
     random.seed(seed)
@@ -410,7 +560,9 @@ def train():
     data_args.guide_data_num = extra_args.guide_data_num
     data_args.alignment_dataset_path = extra_args.alignment_dataset_path
     data_args.beaverTails_dataset_path = extra_args.beaverTails_dataset_path
+    data_args.decodingTrust_dataset_path = extra_args.decodingTrust_dataset_path
     data_args.bad_sample_num = extra_args.bad_sample_num
+    data_args.harmful_dataset = extra_args.harmful_dataset
 
 
     log_path = './logs/'
@@ -559,7 +711,10 @@ def train():
     print(model.print_trainable_parameters())
     print(model)
     # print(model.print_trainable_parameters())
-    data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
+    if data_args.harmful_dataset == 'DecodingTrust':
+        data_module = make_supervised_data_module_DecodingTrust(tokenizer=tokenizer, data_args=data_args)
+    else:
+        data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
     if training_args.optimizer == "mesfa":
         import torch.optim as optim
         trainer = BaseTrainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
@@ -567,7 +722,8 @@ def train():
         dangerous_dataset = GradientSupervisedDataset(alignment_dataset_path=data_args.alignment_dataset_path,
                                                       tokenizer=tokenizer,
                                                       data_path="dangerous",
-                                                      sample_num=training_args.prompt_data_size)
+                                                      sample_num=training_args.prompt_data_size,
+                                                      decoding_trust_path=data_args.decodingTrust_dataset_path)
         trainer.specific_data_init(dangerous_dataset)
         print("Alignment with MeSfa !!!")
     elif training_args.optimizer == "tar":
@@ -814,3 +970,4 @@ def train():
 
 if __name__ == "__main__":
     train()
+

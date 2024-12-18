@@ -35,7 +35,6 @@ from transformers.models.qwen2.modeling_qwen2 import Qwen2Attention
 import copy
 
 from loss_func.repnoise_loss import rep_noise_loss
-from memory_calculate import calculate_gradient_weight_optimizer_memory
 
 if version.parse(torch.__version__) >= version.parse("1.6"):
     from torch.cuda.amp import autocast
@@ -141,7 +140,10 @@ class BaseTrainer(Trainer):
 
     def switch_active_layers(self, n_layers, probability, total_layers):
         # Randomly select n_layers to activate
+        #active_layers_indices = np.argsort(np.array(probability))[-n_layers:]
+
         active_layers_indices = sorted(np.random.choice(range(total_layers), n_layers, replace=False, p=probability))
+        #active_layers_indices = sorted(np.random.choice(range(total_layers), n_layers, replace=False))
 
         print(f"In Activating layers at indices: {active_layers_indices} for the next steps.", flush=True)
         return active_layers_indices
@@ -213,7 +215,6 @@ class BaseTrainer(Trainer):
                                                                    probability=self.probability,
                                                                    total_layers=len(self.layers))
 
-        # self.active_layers_indices = [i for i in range(self.args.lisa_activated_layers)]
         inputs['activate_layers'] = []
         if len(self.layers) > 26:
             for i in self.active_layers_indices:
@@ -223,14 +224,7 @@ class BaseTrainer(Trainer):
         else:
             inputs['activate_layers'] = self.active_layers_indices
 
-        # print(self.active_layers_indices)
         self.unfreeze_activate_layers()
-
-        # for name, param in model.named_parameters():
-        #     if 'lora' in name:
-        #         print(name, param.requires_grad)
-
-
 
         self.pre_first_step(model)
         step(inputs, model)
@@ -239,12 +233,7 @@ class BaseTrainer(Trainer):
         self.pre_second_step(model)
         loss = step(inputs, model)
         self.after_second_step(model)
-        # for param in model.parameters():
-        #     if param.grad is not None:
-        #         param.grad*= 1/2
-        # print(len(self.layers))
 
-        # calculate_gradient_weight_optimizer_memory(model)
         return loss.detach() / self.args.gradient_accumulation_steps
 
     @torch.no_grad()
