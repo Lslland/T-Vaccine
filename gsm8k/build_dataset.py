@@ -11,7 +11,7 @@ ANSWER_PROMPT = "The final answer is: "
 QUESTION_PROMPT = "\nFirst think step by step and then answer the final number.\n"
 
 from datasets import load_dataset
-dataset = load_dataset("/home/lgz/papers/LLM_20240530/data/openai/gsm8k", 'main')
+dataset = load_dataset("/data/openai/gsm8k", 'main')
 output_json = f'../data/gsm8k.json'
 output_data_lst = []
 for data in dataset["train"]:
