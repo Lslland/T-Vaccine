@@ -10,7 +10,7 @@ args = parser.parse_args()
 
 
 from datasets import load_dataset
-dataset = load_dataset("/home/lgz/papers/LLM_20240530/data/fancyzhx/ag_news")
+dataset = load_dataset("/data/fancyzhx/ag_news")
 output_json = f'../data/ag_news.json'
 output_data_lst = []
 for data in dataset["train"]:
