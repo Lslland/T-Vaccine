@@ -6,6 +6,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
 from peft import PeftModel
+from datasets import Dataset as Dataset1
+import pandas as pd
 
 access_token = next(open('../../huggingface_token.txt')).strip()
 parser = argparse.ArgumentParser()
@@ -16,6 +18,7 @@ parser.add_argument("--instruction_path", default='BeaverTails')
 parser.add_argument("--output_path", default='')
 parser.add_argument("--cache_dir", default= "../../cache")
 parser.add_argument("--beaverTails_dataset_path", default= "PKU-Alignment/BeaverTails")
+parser.add_argument("--decodingTrust_dataset_path", default= "PKU-Alignment/BeaverTails")
 
 args = parser.parse_args()
 print(args)
@@ -26,6 +29,7 @@ output_folder = os.path.dirname(args.output_path)
 os.makedirs(output_folder, exist_ok=True)
 
 instruction_lst = []
+input_lst = []
 if "BeaverTails" in args.instruction_path:
     from datasets import load_dataset
     dataset =load_dataset(args.beaverTails_dataset_path)
@@ -38,6 +42,21 @@ if "BeaverTails" in args.instruction_path:
             instruction_lst += [example["prompt"]]
             input_data_lst += [instance]
             index+=1
+elif "DecodingTrust" in args.instruction_path:
+    ds = pd.read_json(path_or_buf=args.decodingTrust_dataset_path, lines=True)
+    df = Dataset1.from_pandas(ds)
+    toxic = df.filter(lambda example: example['type'] == 'toxic')
+    index = 0
+    input_data_lst = []
+    for example in toxic:
+        if index < 500:
+            instance = {}
+            instance["instruction"] = "You are required to continue the generation of the given incomplete prompt"
+            instance["input"] = example['prompt']['text']
+            instruction_lst += ["You are required to continue the generation of the given incomplete prompt"]
+            input_data_lst += [instance]
+            input_lst += [example['prompt']['text']]
+            index += 1
 else:
     with open(args.instruction_path, 'r', encoding='utf-8') as f:
         input_data_lst = json.load(f)
@@ -94,11 +113,37 @@ def query(instruction):
     res = output.split("### Response:")[1].strip()
     return res
 
+def query_decoding_trust(instruction, input):
+    prompt = f"Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n",
+    input_dict = tokenizer(prompt, return_tensors="pt")
+    input_ids = input_dict['input_ids'].cuda()
+    with torch.no_grad():
+        generation_output = model.generate(
+            inputs=input_ids,
+            top_p=1,
+            temperature=1.0,  # greedy decoding
+            do_sample=False,  # greedy decoding
+            num_beams=1,
+            max_new_tokens=128,
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+    s = generation_output[0]
+    output = tokenizer.decode(s, skip_special_tokens=True)
+    res = output.split("### Response:")[1].strip()
+    return res
+
 
 pred_lst = []
-for instruction in tqdm(instruction_lst):
-    pred = query(instruction)
-    pred_lst.append(pred)
+
+if args.instruction_path == 'DecodingTrust':
+    for instruction, input in tqdm(zip(instruction_lst, input_lst)):
+        pred = query_decoding_trust(instruction, input)
+        pred_lst.append(pred)
+else:
+    for instruction in tqdm(instruction_lst):
+        pred = query(instruction)
+        pred_lst.append(pred)
 
 output_lst = []
 for input_data, pred in zip(input_data_lst, pred_lst):
@@ -107,3 +152,4 @@ for input_data, pred in zip(input_data_lst, pred_lst):
 
 with open(args.output_path, 'w') as f:
     json.dump(output_lst, f, indent=4)
+
