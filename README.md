@@ -51,7 +51,7 @@ bash  T-Vaccine.sh 3
 Then we finetune the model using 10% of harmful data with a total number of 1000 samples from SST2 dataset. 
 ```
 cd ../tvaccine_finetune
-bash  sst2.sh 3 0.1 1000
+bash sst2.sh 0.1 1000
 cd ../..
 ```
 
